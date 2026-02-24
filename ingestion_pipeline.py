@@ -6,16 +6,16 @@ vector database for retrieval use cases.
 """
 
 import os
-from langchain_community.document_loaders import TextLoader, DirectoryLoader
+from langchain_community.document_loaders import DirectoryLoader, BSHTMLLoader
 from langchain_text_splitters import CharacterTextSplitter # for chunking
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from dotenv import load_dotenv
 
 # Loads environment variables (e.g., GOOGLE_API_KEY) from a local .env file.
 load_dotenv()
 
-def load_documents(docs_path="docs", glob_pattern="*.txt", loader_cls=TextLoader):
+def load_documents(docs_path="docs", glob_pattern="*.html", loader_cls=BSHTMLLoader):
     """Load documents from a directory using a glob pattern.
 
     Args:
@@ -38,7 +38,8 @@ def load_documents(docs_path="docs", glob_pattern="*.txt", loader_cls=TextLoader
     loader = DirectoryLoader(
         path=docs_path,
         glob=glob_pattern,
-        loader_cls=loader_cls
+        loader_cls=loader_cls,
+        loader_kwargs={"open_encoding": "utf-8"}
     )
 
     documents = loader.load()
@@ -46,12 +47,12 @@ def load_documents(docs_path="docs", glob_pattern="*.txt", loader_cls=TextLoader
     if len(documents) == 0:
         raise FileNotFoundError(f"No {glob_pattern} files found in {docs_path}")
 
-    # for i, doc in enumerate(documents[:2]):
-    #     print(f"\nDocument {i+1}:")
-    #     print(f"\tSource: {doc.metadata['source']}")
-    #     print(f"\tLength: {len(doc.page_content)} characters")
-    #     print(f"\tContent preview: {doc.page_content[:100]}...")
-    #     print(f"\tMetadata: {doc.metadata}")
+    for i, doc in enumerate(documents[:2]):
+        print(f"\nDocument {i+1}:")
+        print(f"\tSource: {doc.metadata['source']}")
+        print(f"\tLength: {len(doc.page_content)} characters")
+        print(f"\tContent preview: {doc.page_content[:100]}...")
+        print(f"\tMetadata: {doc.metadata}")
 
     return documents
 
@@ -77,14 +78,14 @@ def split_documents(documents, chunk_size=800, chunk_overlap=0, splitter=Charact
 
     chunks = text_splitter.split_documents(documents)
 
-    # for i, chunk in enumerate(chunks[:5]):
-    #     print(f"\n--- Chunk {i+1} ---")
-    #     print(f"\tSource: {chunk.metadata['source']}")
-    #     print(f"\tLength: {len(chunk.page_content)} characters")
-    #     print(f"\tContent: \n{chunk.page_content}")
-    #     print(f"\tMetadata: {chunk.metadata}")
-    #     print("-" * 50)
-    # print(f"\nTotal chunks: {len(chunks)}\n")
+    for i, chunk in enumerate(chunks[:5]):
+        print(f"\n--- Chunk {i+1} ---")
+        print(f"\tSource: {chunk.metadata['source']}")
+        print(f"\tLength: {len(chunk.page_content)} characters")
+        print(f"\tContent: \n{chunk.page_content}")
+        print(f"\tMetadata: {chunk.metadata}")
+        print("-" * 50)
+    print(f"\nTotal chunks: {len(chunks)}\n")
 
     return chunks
 
@@ -99,8 +100,8 @@ def create_vector_store(chunks, persist_directory="db/chroma_db"):
         Chroma: Persisted vector store instance.
     """
 
-    # Uses Gemini embedding model; requires GOOGLE_API_KEY in environment.
-    embedding_model = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
+    # Uses HF embedding model.
+    embedding_model = HuggingFaceEmbeddings(model="clips/e5-small-trm-nl")
 
     # Build and persist a local vector index on disk.
     vectorstore = Chroma.from_documents(
@@ -123,7 +124,7 @@ def main():
     # 2. Chunking files
     chunks = split_documents(documents,
                             chunk_size=800,
-                            chunk_overlap=0,
+                            chunk_overlap=40,
                             splitter=CharacterTextSplitter,
                             separator=" ")
     
