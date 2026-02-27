@@ -15,3 +15,6 @@ __pycache__/
 # Agents context files
 AGENTS.md
 GEMINI.md
+
+# TODO files
+TODO.md

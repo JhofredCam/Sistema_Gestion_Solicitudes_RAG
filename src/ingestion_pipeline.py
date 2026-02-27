@@ -7,10 +7,11 @@ vector database for retrieval use cases.
 
 import os
 from langchain_community.document_loaders import DirectoryLoader, BSHTMLLoader
-from langchain_text_splitters import CharacterTextSplitter # for chunking
+from langchain_text_splitters import RecursiveCharacterTextSplitter # for chunking
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from dotenv import load_dotenv
+from transformers import AutoTokenizer
 
 # Loads environment variables (e.g., GOOGLE_API_KEY) from a local .env file.
 load_dotenv()
@@ -56,7 +57,7 @@ def load_documents(docs_path="docs", glob_pattern="*.html", loader_cls=BSHTMLLoa
 
     return documents
 
-def split_documents(documents, chunk_size=800, chunk_overlap=0, splitter=CharacterTextSplitter, separator=""):
+def split_documents(documents, chunk_size=512, chunk_overlap=0):
     """Split loaded documents into chunks for embedding.
 
     Args:
@@ -69,11 +70,14 @@ def split_documents(documents, chunk_size=800, chunk_overlap=0, splitter=Charact
     Returns:
         list: Chunked LangChain Document objects.
     """
+    tokenizer = AutoTokenizer.from_pretrained('intfloat/multilingual-e5-small')
+
     # Smaller chunks can improve retrieval precision but may increase index size.
-    text_splitter = splitter(
+    text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+        tokenizer=tokenizer,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separator=separator
+        # separator=separator
     )
 
     chunks = text_splitter.split_documents(documents)
@@ -101,7 +105,7 @@ def create_vector_store(chunks, persist_directory="db/chroma_db"):
     """
 
     # Uses HF embedding model.
-    embedding_model = HuggingFaceEmbeddings(model="clips/e5-small-trm-nl")
+    embedding_model = HuggingFaceEmbeddings(model="intfloat/multilingual-e5-small")
 
     # Build and persist a local vector index on disk.
     vectorstore = Chroma.from_documents(
@@ -123,11 +127,9 @@ def main():
 
     # 2. Chunking files
     chunks = split_documents(documents,
-                            chunk_size=800,
-                            chunk_overlap=40,
-                            splitter=CharacterTextSplitter,
-                            separator=" ")
-    
+                            chunk_size=256,
+                            chunk_overlap=48,
+                            )    
     # 3. Embedding and storing in DB
     vectorstore = create_vector_store(chunks)
 
