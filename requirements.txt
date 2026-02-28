@@ -1,6 +1,7 @@
 -c constraints.txt
 python-dotenv
 langgraph
+langgraph-checkpoint-sqlite
 langchain
 langchain-core
 langchain-community

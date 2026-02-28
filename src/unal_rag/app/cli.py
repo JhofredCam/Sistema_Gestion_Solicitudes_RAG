@@ -32,6 +32,7 @@ def _handle_ask(args: argparse.Namespace) -> int:
         question=args.question,
         max_iterations=args.max_iterations,
         trace=args.trace,
+        reset_memory=args.reset_memory,
     )
 
 
@@ -88,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--trace",
         action="store_true",
         help="Print traceability data for debugging and audits.",
+    )
+    ask_parser.add_argument(
+        "--reset-memory",
+        action="store_true",
+        help="Clear persisted memory and checkpoints before running.",
     )
     ask_parser.set_defaults(func=lambda args: _handle_ask(args))
 
