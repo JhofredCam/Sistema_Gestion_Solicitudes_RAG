@@ -1,0 +1,16 @@
+-c constraints.txt
+python-dotenv
+langgraph
+langchain
+langchain-core
+langchain-community
+langchain-chroma
+langchain-huggingface==1.2.0
+langchain-google-genai
+langchain-groq
+langchain-text-splitters
+chromadb
+transformers
+pydantic
+beautifulsoup4
+lxml
