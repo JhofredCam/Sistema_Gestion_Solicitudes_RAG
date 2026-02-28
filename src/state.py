@@ -60,3 +60,8 @@ class AgentState(TypedDict, total=False):
     tool_handled: bool
     tool_name: str
     tool_result: Dict[str, Any]
+
+    # LLM failure flag (e.g., rate limit or connection error)
+    llm_failure: bool
+    llm_failure_reason: str
+    llm_failure_source: str

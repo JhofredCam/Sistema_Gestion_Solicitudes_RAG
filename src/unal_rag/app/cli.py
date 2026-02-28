@@ -4,6 +4,8 @@ import argparse
 import sys
 
 from ..config.settings import load_settings
+from ..config.logging import configure_logging
+from ..config.logging import configure_logging
 from .ask import run_ask
 from .doctor import run_doctor
 from .ingest import run_ingest
@@ -27,6 +29,7 @@ def _handle_ingest(args: argparse.Namespace) -> int:
 
 def _handle_ask(args: argparse.Namespace) -> int:
     settings = load_settings()
+    configure_logging(verbose_http=args.trace)
     return run_ask(
         settings,
         question=args.question,
@@ -101,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     exit_code = args.func(args)

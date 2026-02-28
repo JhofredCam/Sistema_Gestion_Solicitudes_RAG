@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from langchain_community.document_loaders import BSHTMLLoader, DirectoryLoader, TextLoader
+from bs4 import BeautifulSoup
 
 from ..config.settings import Settings
 
@@ -59,6 +60,28 @@ def _load_documents(settings: Settings, docs_path: Path) -> list:
     return docs
 
 
+def _override_title_from_info_texto(docs: list) -> None:
+    for doc in docs:
+        source = str(doc.metadata.get("source", ""))
+        if not source:
+            continue
+        source_path = Path(source)
+        if source_path.suffix.lower() not in _HTML_EXTS:
+            continue
+        if not source_path.exists():
+            continue
+        html = source_path.read_text(encoding="utf-8", errors="ignore")
+        soup = BeautifulSoup(html, "lxml")
+        container = soup.find(id="info_texto")
+        title_text = ""
+        if container:
+            first_text = next(container.stripped_strings, "")
+            title_text = first_text.strip()
+        if not title_text:
+            title_text = source_path.stem.replace("_", " ")
+        doc.metadata["title"] = title_text
+
+
 def _enrich_chunks(chunks: list) -> None:
     ingested_at = _now_iso()
     version = _version()
@@ -109,6 +132,7 @@ def run_ingest(
         return 1
 
     documents = _load_documents(settings, docs_root)
+    _override_title_from_info_texto(documents)
     if not documents:
         print(f"No supported documents found in {docs_root}")
         return 1

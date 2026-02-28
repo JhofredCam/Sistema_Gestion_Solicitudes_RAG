@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+import logging
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -10,6 +11,7 @@ from ..llm_config import GROUNDING_EVALUATOR_LLM
 from ..prompt_loader import load_prompt
 from ..state import AgentState
 from .retriever import DEFAULT_K, MAX_K, MIN_K
+from ..unal_rag.utils.errors import is_rate_limit_429
 
 
 DEFAULT_MAX_ITERATIONS = 2
@@ -17,6 +19,7 @@ RETRY_K_STEP = 2
 MAX_DOC_CHARS = 1200
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class GroundingEvaluation(BaseModel):
@@ -37,6 +40,8 @@ def _evaluator_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
         model=GROUNDING_EVALUATOR_LLM.model,
         temperature=GROUNDING_EVALUATOR_LLM.temperature,
+        # google-genai treats 0 as falsy and falls back to default retries
+        max_retries=1,
     )
 
 
@@ -95,6 +100,28 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
     generation = state.get("generation", "").strip()
     documents = state.get("documents", [])
     k_value = _clamp_k(_safe_int(state.get("k_value", DEFAULT_K), DEFAULT_K))
+
+    if state.get("llm_failure"):
+        reason = "Fallo de conexion con LLM; no se reintenta."
+        iteration_count = max(0, _safe_int(state.get("iteration_count", 0), 0))
+        iteration_history = _append_iteration_history(
+            state,
+            iteration_count=iteration_count,
+            k_value=k_value,
+            is_grounded=False,
+            decision="end",
+            reason=reason,
+        )
+        return {
+            **state,
+            "is_grounded": False,
+            "evaluation_decision": "end",
+            "evaluation_result": {"is_grounded": False, "reason": reason},
+            "critique_result": {"is_grounded": False, "reason": reason},
+            "retry_count": iteration_count,
+            "iteration_history": iteration_history,
+            "evaluator_prompt": "",
+        }
 
     iteration_count = max(0, _safe_int(state.get("iteration_count", 0), 0))
     max_iterations = max(
@@ -213,7 +240,14 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
             "reason": reason,
             "unsupported_claims": unsupported_claims,
         }
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Evaluator LLM failed (possible rate limit or connection issue). "
+            "provider=%s model=%s.",
+            GROUNDING_EVALUATOR_LLM.provider,
+            GROUNDING_EVALUATOR_LLM.model,
+            exc_info=exc,
+        )
         is_grounded = False
         reason = "No fue posible ejecutar verificacion estructurada."
         unsupported_claims = []
@@ -222,6 +256,33 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
             "citation_compliance": False,
             "reason": reason,
             "unsupported_claims": unsupported_claims,
+        }
+        # Do not retry on connection failure.
+        iteration_count = max(0, _safe_int(state.get("iteration_count", 0), 0))
+        iteration_history = _append_iteration_history(
+            state,
+            iteration_count=iteration_count,
+            k_value=k_value,
+            is_grounded=False,
+            decision="end",
+            reason=reason,
+        )
+        failure_reason = (
+            "rate_limit_429" if is_rate_limit_429(exc) else "evaluator_connection_failure"
+        )
+        return {
+            **state,
+            "is_grounded": False,
+            "evaluation_decision": "end",
+            "iteration_count": iteration_count,
+            "evaluation_result": evaluation_result,
+            "critique_result": evaluation_result,
+            "retry_count": iteration_count,
+            "iteration_history": iteration_history,
+            "evaluator_prompt": prompt,
+            "llm_failure": True,
+            "llm_failure_reason": failure_reason,
+            "llm_failure_source": f"{GROUNDING_EVALUATOR_LLM.provider}:{GROUNDING_EVALUATOR_LLM.model}",
         }
 
     if is_grounded:

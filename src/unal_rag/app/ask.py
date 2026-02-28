@@ -43,6 +43,9 @@ def run_ask(
             "question": question.strip(),
             "iteration_count": 0,
             "max_iterations": max(0, int(max_iterations)),
+            "llm_failure": False,
+            "llm_failure_reason": "",
+            "llm_failure_source": "",
         },
         config={"configurable": {"thread_id": "default"}},
     )

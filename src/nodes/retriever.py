@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from typing import Any
+import logging
 
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -21,6 +22,7 @@ MAX_K = 8
 DEFAULT_MAX_ITERATIONS = 2
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class KSelection(BaseModel):
@@ -81,7 +83,14 @@ def select_k_node(state: AgentState) -> AgentState:
             selected_k = _clamp_k(result.k_value)
             selected_k_source = "llm"
             selected_k_reason = "K sugerido por LLM segun intent y complejidad de la consulta."
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "LLM k-selector failed (possible rate limit or connection issue). "
+                "provider=%s model=%s. Using fallback k.",
+                K_SELECTOR_LLM.provider,
+                K_SELECTOR_LLM.model,
+                exc_info=exc,
+            )
             selected_k = fallback_k
             selected_k_source = "fallback"
             selected_k_reason = "Fallo selector LLM; se usa k por defecto segun intent."
@@ -110,7 +119,8 @@ def retriever_node(state: AgentState) -> AgentState:
     try:
         vectorstore = _build_vectorstore()
         documents = vectorstore.similarity_search(question, k=k_value)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Vectorstore retrieval failed.", exc_info=exc)
         documents = []
 
     raw_sources = [str(doc.metadata.get("source", "unknown_source")) for doc in documents]

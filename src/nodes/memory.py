@@ -8,7 +8,7 @@ from ..state import AgentState
 
 
 _PROMEDIO_RE = re.compile(
-    r"(promedio|papa)(?:\s+es|\s*[:=]|\s+de)\s*([0-9]+(?:[.,][0-9]+)?)",
+    r"(promedio|papa)(?:\s+es(?:\s+de)?|\s*[:=]|\s+de)\s*([0-9]+(?:[.,][0-9]+)?)",
     re.IGNORECASE,
 )
 _CREDITOS_RE = re.compile(r"credito(?:s)?(?:\s+aprobados|\s*[:=])\s*([0-9]+)", re.IGNORECASE)
@@ -61,6 +61,11 @@ def _extract_glossary(question: str) -> Dict[str, str]:
     if match:
         key = match.group(1).strip().upper()
         value = match.group(2).strip()
+        # Avoid treating numeric PAPA updates as glossary entries.
+        if any(ch.isdigit() for ch in value):
+            return glossary
+        if key == "PAPA" and not any(ch.isalpha() for ch in value):
+            return glossary
         glossary[key] = value
     return glossary
 
@@ -72,6 +77,19 @@ def _extract_plan_code(question: str) -> str | None:
     if match:
         return match.group(1)
     return None
+
+
+def _is_self_profile_update(question: str) -> bool:
+    normalized = question.lower()
+    if re.search(r"\bmi\s+(papa|promedio)\b", normalized) and re.search(r"\d", normalized):
+        return True
+    if re.search(r"\bmi\s+semestre\b", normalized) and re.search(r"\d", normalized):
+        return True
+    if re.search(r"\bmi\s+programa\b", normalized) and "es" in normalized:
+        return True
+    if "tengo" in normalized and ("creditos" in normalized or "semestre" in normalized):
+        return True
+    return False
 
 
 def memory_load_node(state: AgentState) -> AgentState:
@@ -92,7 +110,9 @@ def memory_update_node(state: AgentState) -> AgentState:
     """Update persisted memory profile based on user message."""
     question = str(state.get("question", "")).strip()
     memory = dict(state.get("memory", {}) or {})
-    memory_intent = bool(_MEMORY_INTENT_RE.search(question))
+    memory_intent = bool(_MEMORY_INTENT_RE.search(question)) or _is_self_profile_update(
+        question
+    )
     memory_updated = False
 
     updates = _extract_profile(question)

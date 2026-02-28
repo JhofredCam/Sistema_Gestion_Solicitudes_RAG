@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+import logging
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
@@ -22,6 +23,7 @@ INTENT_ALIASES = {
 }
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class IntentClassification(BaseModel):
@@ -42,6 +44,12 @@ def _is_memory_update(normalized: str) -> bool:
         for token in ("recuerda", "recordar", "guarda", "guardar", "almacena", "memoriza", "ten en cuenta")
     )
     if not has_memory_intent:
+        if ("mi papa" in normalized or "mi promedio" in normalized) and any(ch.isdigit() for ch in normalized):
+            return True
+        if "mi semestre" in normalized and any(ch.isdigit() for ch in normalized):
+            return True
+        if "mi programa" in normalized and "es" in normalized:
+            return True
         return False
     if "papa" in normalized or "promedio" in normalized:
         return "es" in normalized or ":" in normalized or "=" in normalized or "de" in normalized
@@ -113,8 +121,18 @@ def classify_intent(state: AgentState) -> AgentState:
 
     llm = _router_llm().with_structured_output(IntentClassification)
     prompt = load_prompt("router").format(question=question)
-    result = llm.invoke(prompt)
-    normalized = _normalize_intent(result.intent)
+    try:
+        result = llm.invoke(prompt)
+        normalized = _normalize_intent(result.intent)
+    except Exception as exc:
+        logger.warning(
+            "LLM router failed (possible rate limit or connection issue). "
+            "provider=%s model=%s. Falling back to heuristic.",
+            ROUTER_LLM.provider,
+            ROUTER_LLM.model,
+            exc_info=exc,
+        )
+        normalized = "general"
     if normalized == "general":
         heuristic = _heuristic_intent(question)
         if heuristic:

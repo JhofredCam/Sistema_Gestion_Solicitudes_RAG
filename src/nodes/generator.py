@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dotenv import load_dotenv
+import logging
 from langchain_core.documents import Document
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,9 +12,11 @@ from ..prompt_loader import load_prompt
 from ..state import AgentState
 from ..tools.plan import clarificar_plan
 from ..tools.academic_status import verificar_perdida_calidad_estudiante
+from ..unal_rag.utils.errors import is_rate_limit_429
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 MAX_QUOTE_CHARS = 220
 MAX_CONTEXT_CHARS = 1800
 
@@ -26,6 +29,8 @@ def _rag_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
         model=RAG_GENERATION_LLM.model,
         temperature=RAG_GENERATION_LLM.temperature,
+        # google-genai treats 0 as falsy and falls back to default retries
+        max_retries=1,
     )
 
 
@@ -78,6 +83,36 @@ def _traceability_block(retrieval_trace: list[dict]) -> str:
         )
         lines.append(f"  fragmento: {item.get('snippet')}")
     return "\n".join(lines)
+
+
+def _replace_doc_citations(text: str, doc_map: dict[int, Document]) -> str:
+    import re
+
+    if not text:
+        return text
+
+    pattern = re.compile(r"\[DOC ([^\]]+)\]")
+
+    def _replacement(match: re.Match) -> str:
+        content = match.group(1).replace("DOC", "")
+        parts = [p.strip() for p in re.split(r"[;,]", content)]
+        titles = []
+        for part in parts:
+            if not part:
+                continue
+            try:
+                idx = int(part)
+            except ValueError:
+                continue
+            doc = doc_map.get(idx)
+            if doc is None:
+                continue
+            titles.append(str(doc.metadata.get("title", _source_from_doc(doc))))
+        if titles:
+            return f"[{'; '.join(titles)}]"
+        return match.group(0)
+
+    return pattern.sub(_replacement, text)
 
 
 def _extract_numeric_value(text: str) -> float | None:
@@ -158,47 +193,35 @@ def direct_llm_node(state: AgentState) -> AgentState:
             "generator_prompt": "",
             "final_prompt": "",
         }
-    if _is_quality_loss_query(question):
-        memory = state.get("memory", {}) or {}
-        papa_value = None
-        if isinstance(memory, dict):
-            papa_value = memory.get("promedio")
-        if papa_value is None:
-            papa_value = _extract_numeric_value(question)
-        result = verificar_perdida_calidad_estudiante.invoke({"papa": papa_value})
-        if not result.get("tiene_dato"):
-            return {
-                **state,
-                "generation": (
-                    "Necesito tu PAPA actual para verificar la pérdida de calidad de estudiante."
-                ),
-                "sources": [],
-                "generator_prompt": "",
-                "final_prompt": "",
-            }
-        perdio = result.get("perdio_calidad")
-        if perdio:
-            msg = (
-                f"Sí. Con PAPA {papa_value:.2f} (< 3.0) has perdido la calidad de estudiante."
-            )
-        else:
-            msg = (
-                f"No. Con PAPA {papa_value:.2f} (≥ 3.0) no has perdido la calidad de estudiante."
-            )
-        return {
-            **state,
-            "generation": msg,
-            "sources": [],
-            "generator_prompt": "",
-            "final_prompt": "",
-        }
     glossary_block = _glossary_block(state.get("memory", {}))
     question_with_glossary = (
         f"{question}\n\n{glossary_block}" if glossary_block else question
     )
     prompt = load_prompt("direct_llm").format(question=question_with_glossary)
-    response = _direct_llm().invoke(prompt)
-    answer = response.content if isinstance(response.content, str) else str(response.content)
+    try:
+        response = _direct_llm().invoke(prompt)
+        answer = response.content if isinstance(response.content, str) else str(response.content)
+    except Exception as exc:
+        logger.warning(
+            "Direct LLM call failed (possible rate limit or connection issue). "
+            "provider=%s model=%s.",
+            DIRECT_LLM.provider,
+            DIRECT_LLM.model,
+            exc_info=exc,
+        )
+        failure_reason = (
+            "rate_limit_429" if is_rate_limit_429(exc) else "direct_llm_connection_failure"
+        )
+        return {
+            **state,
+            "generation": "No fue posible contactar el modelo en este momento.",
+            "sources": [],
+            "generator_prompt": prompt,
+            "final_prompt": prompt,
+            "llm_failure": True,
+            "llm_failure_reason": failure_reason,
+            "llm_failure_source": f"{DIRECT_LLM.provider}:{DIRECT_LLM.model}",
+        }
 
     return {
         **state,
@@ -232,8 +255,9 @@ def rag_generator_node(state: AgentState) -> AgentState:
         source = _source_from_doc(doc)
         chunk_id = doc.metadata.get("chunk_id", "unknown_chunk")
         doc_id = doc.metadata.get("doc_id", source)
+        title = doc.metadata.get("title", source)
         context_blocks.append(
-            f"[DOC {idx}] source={source} | doc_id={doc_id} | chunk_id={chunk_id}\n"
+            f"[DOC {idx}] title={title} | source={source} | doc_id={doc_id} | chunk_id={chunk_id}\n"
             f"Contenido:\n{_truncate(doc.page_content)}"
         )
     context = "\n\n".join(context_blocks)
@@ -275,13 +299,26 @@ def rag_generator_node(state: AgentState) -> AgentState:
 
     try:
         parsed = _rag_llm().with_structured_output(GroundedResponse).invoke(prompt)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "RAG generation LLM failed (possible rate limit or connection issue). "
+            "provider=%s model=%s.",
+            RAG_GENERATION_LLM.provider,
+            RAG_GENERATION_LLM.model,
+            exc_info=exc,
+        )
+        failure_reason = (
+            "rate_limit_429" if is_rate_limit_429(exc) else "rag_generation_connection_failure"
+        )
         return {
             **state,
-            "generation": _insufficient_evidence_answer(),
+            "generation": "No fue posible contactar el modelo en este momento.",
             "sources": [],
             "generator_prompt": prompt,
             "final_prompt": prompt,
+            "llm_failure": True,
+            "llm_failure_reason": failure_reason,
+            "llm_failure_source": f"{RAG_GENERATION_LLM.provider}:{RAG_GENERATION_LLM.model}",
         }
 
     validated_claims = []
@@ -289,7 +326,8 @@ def rag_generator_node(state: AgentState) -> AgentState:
     for claim in parsed.claims:
         valid_ids = [doc_id for doc_id in claim.support_doc_ids if doc_id in doc_map]
         if claim.claim.strip() and valid_ids:
-            validated_claims.append((claim.claim.strip(), valid_ids))
+            cleaned_claim = _replace_doc_citations(claim.claim.strip(), doc_map)
+            validated_claims.append((cleaned_claim, valid_ids))
             used_doc_ids.update(valid_ids)
 
     if parsed.insufficient_evidence or not validated_claims:
@@ -301,21 +339,26 @@ def rag_generator_node(state: AgentState) -> AgentState:
             "final_prompt": prompt,
         }
 
-    claim_lines = [
-        f"- {claim_text} [DOC {', DOC '.join(str(doc_id) for doc_id in doc_ids)}]"
-        for claim_text, doc_ids in validated_claims
-    ]
+    claim_lines = []
+    for claim_text, doc_ids in validated_claims:
+        titles = []
+        for doc_id in doc_ids:
+            doc = doc_map[doc_id]
+            titles.append(str(doc.metadata.get("title", _source_from_doc(doc))))
+        claim_lines.append(f"- {claim_text} [{'; '.join(titles)}]")
 
     quote_lines = []
     sources = []
     for doc_id in sorted(used_doc_ids):
         doc = doc_map[doc_id]
         source = _source_from_doc(doc)
+        title = doc.metadata.get("title", source)
         sources.append(source)
-        quote_lines.append(f'> [DOC {doc_id}] "{_quote_from_doc(doc)}" (source: {source})')
+        quote_lines.append(f'> [{title}] "{_quote_from_doc(doc)}" (source: {source})')
 
+    answer_text = _replace_doc_citations(parsed.answer.strip(), doc_map)
     final_answer = (
-        f"{parsed.answer.strip()}\n\n"
+        f"{answer_text}\n\n"
         "Afirmaciones con soporte:\n"
         f"{chr(10).join(claim_lines)}\n\n"
         "Citas:\n"

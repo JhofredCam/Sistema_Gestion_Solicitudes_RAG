@@ -8,6 +8,7 @@ from ..tools.academics import (
     calcular_plazo,
     calcular_promedio,
 )
+from ..tools.academic_status import verificar_perdida_calidad_estudiante
 
 
 def _extract_numbers(text: str) -> list[float]:
@@ -41,12 +42,67 @@ def _extract_creditos(text: str) -> tuple[int | None, int | None]:
     return req, ap
 
 
+def _is_personal_query(text: str) -> bool:
+    lowered = text.lower()
+    if any(token in lowered for token in ("mi ", "mio", "mía", "mis ", "tengo", "con mi", "mi actual")):
+        return True
+    if "he perdido" in lowered or "he perdido calidad" in lowered:
+        return True
+    if "he" in lowered and "calidad de estudiante" in lowered:
+        return True
+    if re.search(r"\b(papa|promedio)\b", lowered) and re.search(r"\d", lowered):
+        return True
+    return False
+
+
 def tools_pre_node(state: AgentState) -> AgentState:
     question = str(state.get("question", "")).strip()
     if not question:
         return {**state, "tool_handled": False}
 
     lowered = question.lower()
+
+    # perdida de calidad de estudiante (usa PAPA/Promedio de memoria o de la pregunta)
+    if (
+        ("calidad de estudiante" in lowered or "perdido calidad" in lowered)
+        and _is_personal_query(question)
+    ):
+        memory = state.get("memory", {}) or {}
+        papa_value = None
+        nums = _extract_numbers(question)
+        if nums:
+            papa_value = nums[0]
+        if papa_value is None and isinstance(memory, dict):
+            papa_value = memory.get("promedio")
+        result = verificar_perdida_calidad_estudiante.invoke({"papa": papa_value})
+        if not result.get("tiene_dato"):
+            return {
+                **state,
+                "generation": (
+                    "Necesito tu PAPA actual para verificar la perdida de calidad de estudiante."
+                ),
+                "tool_handled": True,
+                "tool_name": "verificar_perdida_calidad_estudiante",
+                "tool_result": result,
+                "final_prompt": "tool: verificar_perdida_calidad_estudiante",
+            }
+        perdio = result.get("perdio_calidad")
+        if perdio:
+            msg = (
+                f"Si. Con PAPA {papa_value:.2f} (< 3.0) has perdido la calidad de estudiante."
+            )
+        else:
+            msg = (
+                f"No. Con PAPA {papa_value:.2f} (>= 3.0) no has perdido la calidad de estudiante."
+            )
+        return {
+            **state,
+            "generation": msg,
+            "tool_handled": True,
+            "tool_name": "verificar_perdida_calidad_estudiante",
+            "tool_result": result,
+            "final_prompt": "tool: verificar_perdida_calidad_estudiante",
+        }
 
     # calcular_promedio
     if "calcular promedio" in lowered or "promedio de" in lowered:
