@@ -20,6 +20,7 @@ def run_ask(
     question: str | None,
     max_iterations: int,
     trace: bool = False,
+    reset_memory: bool = False,
 ) -> int:
     _ = settings
     if not question or not question.strip():
@@ -33,13 +34,17 @@ def run_ask(
         print(f"Failed to import workflow: {exc}")
         return 1
 
+    if reset_memory:
+        _reset_memory_storage()
+
     graph = build_workflow()
     result = graph.invoke(
         {
             "question": question.strip(),
             "iteration_count": 0,
             "max_iterations": max(0, int(max_iterations)),
-        }
+        },
+        config={"configurable": {"thread_id": "default"}},
     )
 
     print(result.get("generation", ""))
@@ -62,3 +67,16 @@ def run_ask(
         print("\nTrace:")
         print(json.dumps(trace_payload, ensure_ascii=False, indent=2))
     return 0
+
+
+def _reset_memory_storage() -> None:
+    from pathlib import Path
+
+    memory_path = Path("db") / "memory.json"
+    checkpoint_path = Path("db") / "langgraph_checkpoints.sqlite"
+    for path in (memory_path, checkpoint_path):
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass

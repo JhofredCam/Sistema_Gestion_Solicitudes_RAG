@@ -35,10 +35,29 @@ class IntentClassification(BaseModel):
 def _router_llm() -> ChatGroq:
     return ChatGroq(model=ROUTER_LLM.model, temperature=ROUTER_LLM.temperature)
 
+
+def _is_memory_update(normalized: str) -> bool:
+    has_memory_intent = any(
+        token in normalized
+        for token in ("recuerda", "recordar", "guarda", "guardar", "almacena", "memoriza", "ten en cuenta")
+    )
+    if not has_memory_intent:
+        return False
+    if "papa" in normalized or "promedio" in normalized:
+        return "es" in normalized or ":" in normalized or "=" in normalized or "de" in normalized
+    if "creditos aprobados" in normalized or "semestre actual" in normalized:
+        return True
+    if "programa es" in normalized:
+        return True
+    return False
+
 def _heuristic_intent(question: str) -> str | None:
     normalized = question.strip().lower()
     if not normalized:
         return None
+
+    if _is_memory_update(normalized):
+        return "general"
 
     if any(token in normalized for token in ("comparar", "comparación", "comparacion", "contrastar", "diferencia", "vs", "versus")):
         return "comparacion"
@@ -89,6 +108,9 @@ def classify_intent(state: AgentState) -> AgentState:
     if not question:
         return {**state, "intent": "general"}
 
+    if _is_memory_update(question.lower()):
+        return {**state, "intent": "general"}
+
     llm = _router_llm().with_structured_output(IntentClassification)
     prompt = load_prompt("router").format(question=question)
     result = llm.invoke(prompt)
@@ -103,9 +125,13 @@ def classify_intent(state: AgentState) -> AgentState:
 def route_by_intent(state: AgentState) -> Literal["k_selector", "direct_llm"]:
     """Route retrieval intents to k_selector, otherwise answer directly."""
     intent = _normalize_intent(str(state.get("intent", "")))
+    question = str(state.get("question", "")).strip().lower()
+    if _is_memory_update(question):
+        return "direct_llm"
+    if state.get("memory_updated"):
+        return "direct_llm"
     if intent in RETRIEVAL_INTENTS:
         return "k_selector"
-    question = str(state.get("question", "")).strip()
     if _heuristic_intent(question) in RETRIEVAL_INTENTS:
         return "k_selector"
     return "direct_llm"

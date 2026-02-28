@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from ..llm_config import DIRECT_LLM, RAG_GENERATION_LLM
 from ..prompt_loader import load_prompt
 from ..state import AgentState
+from ..tools.plan import clarificar_plan
+from ..tools.academic_status import verificar_perdida_calidad_estudiante
 
 
 load_dotenv()
@@ -52,6 +54,16 @@ def _insufficient_evidence_answer() -> str:
     )
 
 
+def _glossary_block(memory: dict) -> str:
+    glossary = memory.get("glossary") if isinstance(memory, dict) else None
+    if not glossary:
+        return ""
+    lines = ["Glosario del usuario:"]
+    for key, value in glossary.items():
+        lines.append(f"- {key}: {value}")
+    return "\n".join(lines)
+
+
 def _traceability_block(retrieval_trace: list[dict]) -> str:
     if not retrieval_trace:
         return "Trazabilidad:\n- No hubo documentos recuperados."
@@ -66,6 +78,20 @@ def _traceability_block(retrieval_trace: list[dict]) -> str:
         )
         lines.append(f"  fragmento: {item.get('snippet')}")
     return "\n".join(lines)
+
+
+def _extract_numeric_value(text: str) -> float | None:
+    import re
+
+    match = re.search(r"([0-9]+(?:[.,][0-9]+)?)", text)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", "."))
+
+
+def _is_quality_loss_query(text: str) -> bool:
+    lowered = text.lower()
+    return "calidad" in lowered and ("perdi" in lowered or "perd" in lowered)
 
 
 class GroundedClaim(BaseModel):
@@ -91,8 +117,86 @@ def direct_llm_node(state: AgentState) -> AgentState:
     """Answer directly with an LLM, without retrieval context."""
     question = state.get("question", "").strip()
     if not question:
-        return {**state, "generation": "No recibÃ­ una pregunta para responder.", "sources": []}
-    prompt = load_prompt("direct_llm").format(question=question)
+        return {**state, "generation": "No recibi una pregunta para responder.", "sources": []}
+    if _is_quality_loss_query(question):
+        memory = state.get("memory", {}) or {}
+        papa_value = _extract_numeric_value(question)
+        if papa_value is None and isinstance(memory, dict):
+            papa_value = memory.get("promedio")
+        result = verificar_perdida_calidad_estudiante.invoke({"papa": papa_value})
+        if not result.get("tiene_dato"):
+            return {
+                **state,
+                "generation": (
+                    "Necesito tu PAPA actual para verificar la perdida de calidad de estudiante."
+                ),
+                "sources": [],
+                "generator_prompt": "",
+                "final_prompt": "",
+            }
+        perdio = result.get("perdio_calidad")
+        if perdio:
+            msg = (
+                f"Si. Con PAPA {papa_value:.2f} (< 3.0) has perdido la calidad de estudiante."
+            )
+        else:
+            msg = (
+                f"No. Con PAPA {papa_value:.2f} (>= 3.0) no has perdido la calidad de estudiante."
+            )
+        return {
+            **state,
+            "generation": msg,
+            "sources": [],
+            "generator_prompt": "",
+            "final_prompt": "",
+        }
+    if state.get("memory_updated"):
+        return {
+            **state,
+            "generation": "Listo. He guardado esa informacion en tu perfil.",
+            "sources": [],
+            "generator_prompt": "",
+            "final_prompt": "",
+        }
+    if _is_quality_loss_query(question):
+        memory = state.get("memory", {}) or {}
+        papa_value = None
+        if isinstance(memory, dict):
+            papa_value = memory.get("promedio")
+        if papa_value is None:
+            papa_value = _extract_numeric_value(question)
+        result = verificar_perdida_calidad_estudiante.invoke({"papa": papa_value})
+        if not result.get("tiene_dato"):
+            return {
+                **state,
+                "generation": (
+                    "Necesito tu PAPA actual para verificar la pérdida de calidad de estudiante."
+                ),
+                "sources": [],
+                "generator_prompt": "",
+                "final_prompt": "",
+            }
+        perdio = result.get("perdio_calidad")
+        if perdio:
+            msg = (
+                f"Sí. Con PAPA {papa_value:.2f} (< 3.0) has perdido la calidad de estudiante."
+            )
+        else:
+            msg = (
+                f"No. Con PAPA {papa_value:.2f} (≥ 3.0) no has perdido la calidad de estudiante."
+            )
+        return {
+            **state,
+            "generation": msg,
+            "sources": [],
+            "generator_prompt": "",
+            "final_prompt": "",
+        }
+    glossary_block = _glossary_block(state.get("memory", {}))
+    question_with_glossary = (
+        f"{question}\n\n{glossary_block}" if glossary_block else question
+    )
+    prompt = load_prompt("direct_llm").format(question=question_with_glossary)
     response = _direct_llm().invoke(prompt)
     answer = response.content if isinstance(response.content, str) else str(response.content)
 
@@ -134,9 +238,40 @@ def rag_generator_node(state: AgentState) -> AgentState:
         )
     context = "\n\n".join(context_blocks)
 
+    # Clarify plan if multiple plan codes appear in retrieved context.
+    memory = state.get("memory", {}) or {}
+    question_for_plan = question
+    if isinstance(memory, dict) and memory.get("plan_code"):
+        question_for_plan = f"{question}\nPlan: {memory.get('plan_code')}"
+    try:
+        plan_check = clarificar_plan.invoke(
+            {"contexto": context, "pregunta": question_for_plan}
+        )
+    except Exception:
+        plan_check = {"needs_clarification": False, "plan_codes": []}
+    if plan_check.get("needs_clarification"):
+        plan_codes = plan_check.get("plan_codes", [])
+        plan_list = ", ".join(plan_codes) if plan_codes else "N/D"
+        clarification = (
+            "Necesito aclarar el plan de estudios para responder con precisión.\n"
+            f"En los documentos aparecen varios planes: {plan_list}.\n"
+            "Indica el plan (por ejemplo, 3306 o 3302) y continúo."
+        )
+        return {
+            **state,
+            "generation": clarification,
+            "sources": list(dict.fromkeys(state.get("sources", []))),
+            "generator_prompt": "",
+            "final_prompt": "",
+        }
+
     intent = str(state.get("intent", "busqueda")).strip().lower()
     prompt_name = {"resumen": "rag_summary", "comparacion": "rag_compare"}.get(intent, "rag_answer")
-    prompt = load_prompt(prompt_name).format(question=question, context=context)
+    glossary_block = _glossary_block(state.get("memory", {}))
+    question_with_glossary = (
+        f"{question}\n\n{glossary_block}" if glossary_block else question
+    )
+    prompt = load_prompt(prompt_name).format(question=question_with_glossary, context=context)
 
     try:
         parsed = _rag_llm().with_structured_output(GroundedResponse).invoke(prompt)

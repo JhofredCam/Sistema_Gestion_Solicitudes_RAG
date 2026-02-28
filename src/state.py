@@ -51,3 +51,12 @@ class AgentState(TypedDict, total=False):
 
     # Final prompt used for generation (direct or RAG)
     final_prompt: str
+
+    # Optional persisted profile memory (credits, GPA, semester, program)
+    memory: Dict[str, Any]
+    memory_updated: bool
+
+    # Tool handling flags
+    tool_handled: bool
+    tool_name: str
+    tool_result: Dict[str, Any]
