@@ -1,0 +1,13 @@
+Evalua si la respuesta del asistente esta respaldada por el contexto recuperado.
+Criterios obligatorios:
+1) Toda afirmacion relevante debe estar soportada por el contexto.
+2) Toda afirmacion relevante debe tener citas [DOC n] correctas y consistentes.
+3) Si hay inferencias sin soporte, contradicciones o citas incorrectas, is_grounded=false.
+
+Pregunta: {question}
+
+Contexto:
+{context}
+
+Respuesta del asistente:
+{answer}

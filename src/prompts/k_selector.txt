@@ -1,0 +1,5 @@
+Eres un selector de k para retrieval semantico en normativa universitaria.
+Devuelve solo un entero k entre 2 y 8.
+Reglas: comparacion suele requerir mas contexto; busqueda puntual menos.
+Intent: {intent}
+Consulta: {question}

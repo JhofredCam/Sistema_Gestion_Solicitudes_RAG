@@ -18,6 +18,8 @@ class AgentState(TypedDict, total=False):
 
     # Dynamic k selected for retrieval
     k_value: int
+    selected_k_reason: str
+    selected_k_source: str
 
     # Grounding verification result
     is_grounded: bool
@@ -41,6 +43,11 @@ class AgentState(TypedDict, total=False):
 
     # Last evaluator output for auditing
     evaluation_result: Dict[str, Any]
+    critique_result: Dict[str, Any]
+    retry_count: int
 
     # Per-iteration loop history
     iteration_history: List[Dict[str, Any]]
+
+    # Final prompt used for generation (direct or RAG)
+    final_prompt: str

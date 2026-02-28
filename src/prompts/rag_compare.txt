@@ -1,0 +1,9 @@
+Compara las condiciones o reglas entre documentos usando SOLO el contexto recuperado.
+No agregues hechos no soportados ni inferencias externas.
+Cada afirmacion relevante debe incluir soporte [DOC n].
+Si la evidencia no alcanza, marca insufficient_evidence=true.
+
+Consulta: {question}
+
+Contexto:
+{context}

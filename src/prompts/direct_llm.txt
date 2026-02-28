@@ -1,0 +1,4 @@
+Responde la consulta del usuario de forma clara y concisa.
+Si no tienes suficiente informacion, dilo explicitamente.
+
+Consulta: {question}

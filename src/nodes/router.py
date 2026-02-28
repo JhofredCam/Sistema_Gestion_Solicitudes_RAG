@@ -7,6 +7,7 @@ from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
 from ..llm_config import ROUTER_LLM
+from ..prompt_loader import load_prompt
 from ..state import AgentState
 
 
@@ -34,6 +35,45 @@ class IntentClassification(BaseModel):
 def _router_llm() -> ChatGroq:
     return ChatGroq(model=ROUTER_LLM.model, temperature=ROUTER_LLM.temperature)
 
+def _heuristic_intent(question: str) -> str | None:
+    normalized = question.strip().lower()
+    if not normalized:
+        return None
+
+    if any(token in normalized for token in ("comparar", "comparación", "comparacion", "contrastar", "diferencia", "vs", "versus")):
+        return "comparacion"
+
+    if any(token in normalized for token in ("resumen", "resume", "resumir", "sintetiza", "sintesis", "sintetizar")):
+        return "resumen"
+
+    retrieval_terms = (
+        "articulo",
+        "artículo",
+        "norma",
+        "acuerdo",
+        "resolucion",
+        "resolución",
+        "estatuto",
+        "requisito",
+        "requisitos",
+        "doble titulacion",
+        "titulacion",
+        "créditos",
+        "creditos",
+        "matricula",
+        "matrícula",
+        "admisión",
+        "admision",
+        "plazo",
+        "semana",
+        "procedimiento",
+        "proceso",
+    )
+    if any(token in normalized for token in retrieval_terms) or "?" in normalized:
+        return "busqueda"
+
+    return None
+
 
 def _normalize_intent(raw_intent: str) -> str:
     normalized = raw_intent.strip().lower().replace("-", "_")
@@ -50,22 +90,22 @@ def classify_intent(state: AgentState) -> AgentState:
         return {**state, "intent": "general"}
 
     llm = _router_llm().with_structured_output(IntentClassification)
-    prompt = (
-        "Clasifica la consulta del usuario en una sola etiqueta.\\n"
-        "Etiquetas posibles: busqueda, resumen, comparacion, general.\\n"
-        "- busqueda: localizar una norma, articulo o requisito especifico.\\n"
-        "- resumen: sintetizar contenido normativo de uno o varios documentos.\\n"
-        "- comparacion: contrastar reglas o condiciones entre normas.\\n"
-        "- general: conversacion o consulta que no requiere retrieval.\\n\\n"
-        f"Consulta: {question}"
-    )
+    prompt = load_prompt("router").format(question=question)
     result = llm.invoke(prompt)
-    return {**state, "intent": _normalize_intent(result.intent)}
+    normalized = _normalize_intent(result.intent)
+    if normalized == "general":
+        heuristic = _heuristic_intent(question)
+        if heuristic:
+            normalized = heuristic
+    return {**state, "intent": normalized}
 
 
 def route_by_intent(state: AgentState) -> Literal["k_selector", "direct_llm"]:
     """Route retrieval intents to k_selector, otherwise answer directly."""
     intent = _normalize_intent(str(state.get("intent", "")))
     if intent in RETRIEVAL_INTENTS:
+        return "k_selector"
+    question = str(state.get("question", "")).strip()
+    if _heuristic_intent(question) in RETRIEVAL_INTENTS:
         return "k_selector"
     return "direct_llm"

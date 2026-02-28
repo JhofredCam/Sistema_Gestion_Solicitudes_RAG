@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 
 from ..llm_config import GROUNDING_EVALUATOR_LLM
+from ..prompt_loader import load_prompt
 from ..state import AgentState
 from .retriever import DEFAULT_K, MAX_K, MIN_K
 
@@ -123,6 +124,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
                 reason,
             ),
             "evaluation_result": {"is_grounded": False, "reason": reason},
+            "critique_result": {"is_grounded": False, "reason": reason},
+            "retry_count": iteration_count,
             "iteration_history": iteration_history,
             "evaluator_prompt": "",
         }
@@ -149,6 +152,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
                 "max_iterations": max_iterations,
                 "k_value": next_k,
                 "evaluation_result": {"is_grounded": False, "reason": reason},
+                "critique_result": {"is_grounded": False, "reason": reason},
+                "retry_count": next_iteration,
                 "iteration_history": iteration_history,
                 "evaluator_prompt": "",
             }
@@ -176,6 +181,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
             "max_iterations": max_iterations,
             "generation": final_generation,
             "evaluation_result": {"is_grounded": False, "reason": reason},
+            "critique_result": {"is_grounded": False, "reason": reason},
+            "retry_count": iteration_count,
             "iteration_history": iteration_history,
             "evaluator_prompt": "",
         }
@@ -189,15 +196,10 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
         )
     context = "\\n\\n".join(context_blocks)
 
-    prompt = (
-        "Evalua si la respuesta del asistente esta respaldada por el contexto recuperado.\\n"
-        "Criterios obligatorios:\\n"
-        "1) Toda afirmacion relevante debe estar soportada por el contexto.\\n"
-        "2) Toda afirmacion relevante debe tener citas [DOC n] correctas y consistentes.\\n"
-        "3) Si hay inferencias sin soporte, contradicciones o citas incorrectas, is_grounded=false.\\n\\n"
-        f"Pregunta: {question}\\n\\n"
-        f"Contexto:\\n{context}\\n\\n"
-        f"Respuesta del asistente:\\n{generation}"
+    prompt = load_prompt("evaluator").format(
+        question=question,
+        context=context,
+        answer=generation,
     )
 
     try:
@@ -239,6 +241,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
             "iteration_count": iteration_count,
             "max_iterations": max_iterations,
             "evaluation_result": evaluation_result,
+            "critique_result": evaluation_result,
+            "retry_count": iteration_count,
             "iteration_history": iteration_history,
             "evaluator_prompt": prompt,
         }
@@ -263,6 +267,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
             "max_iterations": max_iterations,
             "k_value": next_k,
             "evaluation_result": evaluation_result,
+            "critique_result": evaluation_result,
+            "retry_count": next_iteration,
             "iteration_history": iteration_history,
             "evaluator_prompt": prompt,
         }
@@ -293,6 +299,8 @@ def evaluate_grounding_node(state: AgentState) -> AgentState:
         "max_iterations": max_iterations,
         "generation": final_generation,
         "evaluation_result": evaluation_result,
+        "critique_result": evaluation_result,
+        "retry_count": iteration_count,
         "iteration_history": iteration_history,
         "evaluator_prompt": prompt,
     }

@@ -1,0 +1,8 @@
+Clasifica la consulta del usuario en una sola etiqueta.
+Etiquetas posibles: busqueda, resumen, comparacion, general.
+- busqueda: localizar una norma, articulo o requisito especifico.
+- resumen: sintetizar contenido normativo de uno o varios documentos.
+- comparacion: contrastar reglas o condiciones entre normas.
+- general: conversacion o consulta que no requiere retrieval.
+
+Consulta: {question}
