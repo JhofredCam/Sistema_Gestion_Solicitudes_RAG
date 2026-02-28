@@ -7,6 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 
 from ..llm_config import DIRECT_LLM, RAG_GENERATION_LLM
+from ..prompt_loader import load_prompt
 from ..state import AgentState
 
 
@@ -91,16 +92,17 @@ def direct_llm_node(state: AgentState) -> AgentState:
     question = state.get("question", "").strip()
     if not question:
         return {**state, "generation": "No recibÃ­ una pregunta para responder.", "sources": []}
-
-    prompt = (
-        "Responde la consulta del usuario de forma clara y concisa.\n"
-        "Si no tienes suficiente informaciÃ³n, dilo explÃ­citamente.\n\n"
-        f"Consulta: {question}"
-    )
+    prompt = load_prompt("direct_llm").format(question=question)
     response = _direct_llm().invoke(prompt)
     answer = response.content if isinstance(response.content, str) else str(response.content)
 
-    return {**state, "generation": answer, "sources": [], "generator_prompt": prompt}
+    return {
+        **state,
+        "generation": answer,
+        "sources": [],
+        "generator_prompt": prompt,
+        "final_prompt": prompt,
+    }
 
 
 def rag_generator_node(state: AgentState) -> AgentState:
@@ -116,6 +118,7 @@ def rag_generator_node(state: AgentState) -> AgentState:
             "generation": _insufficient_evidence_answer(),
             "sources": [],
             "generator_prompt": "",
+            "final_prompt": "",
         }
 
     doc_map: dict[int, Document] = {}
@@ -131,14 +134,9 @@ def rag_generator_node(state: AgentState) -> AgentState:
         )
     context = "\n\n".join(context_blocks)
 
-    prompt = (
-        "Responde usando SOLO el contexto recuperado.\n"
-        "No infieras ni agregues hechos no soportados.\n"
-        "Debes devolver afirmaciones puntuales con doc_ids [DOC n] de soporte.\n"
-        "Si la evidencia no alcanza, marca insufficient_evidence=true.\n\n"
-        f"Consulta: {question}\n\n"
-        f"Contexto:\n{context}"
-    )
+    intent = str(state.get("intent", "busqueda")).strip().lower()
+    prompt_name = {"resumen": "rag_summary", "comparacion": "rag_compare"}.get(intent, "rag_answer")
+    prompt = load_prompt(prompt_name).format(question=question, context=context)
 
     try:
         parsed = _rag_llm().with_structured_output(GroundedResponse).invoke(prompt)
@@ -148,6 +146,7 @@ def rag_generator_node(state: AgentState) -> AgentState:
             "generation": _insufficient_evidence_answer(),
             "sources": [],
             "generator_prompt": prompt,
+            "final_prompt": prompt,
         }
 
     validated_claims = []
@@ -164,6 +163,7 @@ def rag_generator_node(state: AgentState) -> AgentState:
             "generation": _insufficient_evidence_answer(),
             "sources": [],
             "generator_prompt": prompt,
+            "final_prompt": prompt,
         }
 
     claim_lines = [
@@ -193,4 +193,5 @@ def rag_generator_node(state: AgentState) -> AgentState:
         "generation": final_answer,
         "sources": list(dict.fromkeys(sources)),
         "generator_prompt": prompt,
+        "final_prompt": prompt,
     }

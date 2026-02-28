@@ -32,3 +32,82 @@ Esto evita configuraciones dispersas y facilita justificar/ajustar decisiones po
 
 - `GROQ_API_KEY`
 - `GOOGLE_API_KEY`
+- `OPENAI_API_KEY`
+
+Opcionales:
+
+- `UNAL_RAG_DOCS_PATH` (default: `docs`)
+- `UNAL_RAG_VECTORSTORE_PATH` (default: `db/chroma_db`)
+- `UNAL_RAG_MIN_DOCS` (default: `50`)
+
+Se recomienda crear un `.env` usando `.env.example`.
+
+## Instalacion local
+
+Pasos sugeridos (PowerShell):
+
+```
+python -m venv .venv
+pip install -e .
+Copy-Item .env.example .env
+```
+
+Luego edita `.env` y completa las llaves requeridas.
+
+Nota Windows:
+Si `Activate.ps1` esta bloqueado por politica de ejecucion, puedes usar el
+Python del entorno virtual sin activarlo:
+
+```powershell
+.\.venv\Scripts\python -m unal_rag doctor
+```
+
+Opcional (habilitar activacion):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\.venv\Scripts\Activate.ps1
+```
+
+## Ejecucion
+
+Con el CLI instalado:
+
+```powershell
+.\.venv\Scripts\unal-rag.exe doctor
+```
+
+Sin instalar el paquete (modo directo):
+
+```powershell
+python -c "import sys; sys.path.insert(0, 'src'); from unal_rag.app.cli import main; main(['doctor'])"
+```
+
+## CLI
+
+Comandos disponibles:
+
+- `unal-rag doctor`
+- `unal-rag ingest` (stub)
+- `unal-rag ask "pregunta..."` (stub)
+
+Si prefieres usar el modulo directamente:
+
+```bash
+python -m unal_rag doctor
+```
+
+## Pruebas
+
+Validar el CLI y el doctor:
+
+```bash
+python -m unal_rag doctor
+```
+
+```bash
+python -m unal_rag doctor --strict
+```
+
+Notas:
+- `doctor --strict` retorna salida no-cero si hay menos de 50 documentos soportados.

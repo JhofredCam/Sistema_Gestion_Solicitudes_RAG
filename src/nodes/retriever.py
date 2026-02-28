@@ -9,6 +9,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from pydantic import BaseModel, Field
 
 from ..llm_config import K_SELECTOR_LLM
+from ..prompt_loader import load_prompt
 from ..state import AgentState
 
 
@@ -71,19 +72,19 @@ def select_k_node(state: AgentState) -> AgentState:
 
     if not question:
         selected_k = fallback_k
+        selected_k_source = "fallback"
+        selected_k_reason = "Consulta vacia; se usa k por defecto segun intent."
     else:
-        prompt = (
-            "Eres un selector de k para retrieval semantico en normativa universitaria.\\n"
-            "Devuelve solo un entero k entre 2 y 8.\\n"
-            "Reglas: comparacion suele requerir mas contexto; busqueda puntual menos.\\n"
-            f"Intent: {intent}\\n"
-            f"Consulta: {question}"
-        )
+        prompt = load_prompt("k_selector").format(intent=intent, question=question)
         try:
             result = _k_selector_llm().with_structured_output(KSelection).invoke(prompt)
             selected_k = _clamp_k(result.k_value)
+            selected_k_source = "llm"
+            selected_k_reason = "K sugerido por LLM segun intent y complejidad de la consulta."
         except Exception:
             selected_k = fallback_k
+            selected_k_source = "fallback"
+            selected_k_reason = "Fallo selector LLM; se usa k por defecto segun intent."
 
     iteration_count = _safe_int(state.get("iteration_count", 0), 0)
     max_iterations = _safe_int(state.get("max_iterations", DEFAULT_MAX_ITERATIONS), DEFAULT_MAX_ITERATIONS)
@@ -91,6 +92,8 @@ def select_k_node(state: AgentState) -> AgentState:
     return {
         **state,
         "k_value": selected_k,
+        "selected_k_reason": selected_k_reason,
+        "selected_k_source": selected_k_source,
         "iteration_count": max(0, iteration_count),
         "max_iterations": max(0, max_iterations),
     }

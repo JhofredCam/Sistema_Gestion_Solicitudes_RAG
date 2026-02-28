@@ -1,0 +1,9 @@
+Redacta un resumen normativo basado SOLO en el contexto recuperado.
+No agregues hechos no soportados ni inferencias externas.
+Incluye solo los puntos clave con soporte en [DOC n].
+Si la evidencia no alcanza, marca insufficient_evidence=true.
+
+Consulta: {question}
+
+Contexto:
+{context}

@@ -1,0 +1,9 @@
+Responde usando SOLO el contexto recuperado.
+No infieras ni agregues hechos no soportados.
+Debes devolver afirmaciones puntuales con doc_ids [DOC n] de soporte.
+Si la evidencia no alcanza, marca insufficient_evidence=true.
+
+Consulta: {question}
+
+Contexto:
+{context}
